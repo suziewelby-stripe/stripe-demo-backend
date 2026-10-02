@@ -5,6 +5,7 @@ const webhooksRoutes = require("./routes/webhooks");
 const accountsRoutes = require("./routes/accounts");
 const paymentsRoutes = require("./routes/payments");
 const customersRoutes = require("./routes/customers");
+const terminalRoutes = require("./routes/terminal");
 const healthController = require("./controllers/health");
 const filesController = require("./controllers/files");
 
@@ -42,9 +43,14 @@ app.get("/success", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/checkout-success.html"));
 });
 
+app.get("/terminal-hardware", (req, res) => {
+  res.sendFile(path.join(__dirname, "../public/terminal-hardware.html"));
+});
+
 // API routes
 app.use("/api", accountsRoutes);
 app.use("/api", paymentsRoutes);
 app.use("/api", customersRoutes);
+app.use("/api", terminalRoutes);
 
 module.exports = app;
