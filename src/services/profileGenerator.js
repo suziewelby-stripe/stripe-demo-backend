@@ -3,6 +3,8 @@
  * Generates realistic customer profiles on the fly for demo purposes
  */
 
+const { getMarket } = require("../config/markets");
+
 // Base data for generating realistic profiles
 const FIRST_NAMES = [
   "James",
@@ -367,19 +369,20 @@ function generateCompanyName() {
 /**
  * Generate a website URL
  */
-function generateWebsite(name) {
+function generateWebsite(name, suffix = "co.uk") {
   const cleanName = name
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, "")
     .replace(/\s+/g, "")
     .substring(0, 20);
-  return `https://${cleanName}.co.uk`;
+  return `https://${cleanName}.${suffix}`;
 }
 
 /**
  * Generate an individual customer profile
  */
-function generateIndividualProfile() {
+function generateIndividualProfile(marketCode = "gb") {
+  const market = getMarket(marketCode);
   const firstName = randomSelection(FIRST_NAMES);
   const lastName = randomSelection(LAST_NAMES);
   const businessName = generateBusinessName(firstName, lastName);
@@ -388,11 +391,11 @@ function generateIndividualProfile() {
     firstName,
     lastName,
     email: generateEmailForBusiness(firstName, lastName, businessName),
-    phone: FIXED_DATA.individual.phone,
+    phone: market.profile.phone,
     dob: FIXED_DATA.individual.dob,
-    address: FIXED_DATA.individual.address,
+    address: market.profile.individualAddress,
     businessName,
-    website: generateWebsite(businessName),
+    website: generateWebsite(businessName, market.websiteSuffix),
     product_description: FIXED_DATA.individual.product_description,
   };
 }
@@ -400,7 +403,8 @@ function generateIndividualProfile() {
 /**
  * Generate a company customer profile
  */
-function generateCompanyProfile() {
+function generateCompanyProfile(marketCode = "gb") {
+  const market = getMarket(marketCode);
   const companyName = generateCompanyName();
 
   const companyDomain =
@@ -408,7 +412,7 @@ function generateCompanyProfile() {
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, "")
       .replace(/\s+/g, "-")
-      .substring(0, 15) + ".com";
+      .substring(0, 15) + `.${market.websiteSuffix}`;
 
   // Generate fixed number of representatives (3) with fixed roles
   const representatives = [];
@@ -432,9 +436,9 @@ function generateCompanyProfile() {
       firstName: repFirstName,
       lastName: repLastName,
       email: `${repFirstName.toLowerCase()}.${repLastName.toLowerCase()}@${companyDomain}`,
-      phone: FIXED_DATA.company.representatives.phone,
+      phone: market.profile.phone,
       dob: FIXED_DATA.company.representatives.dob,
-      address: FIXED_DATA.company.address,
+      address: market.profile.companyAddress,
       title: FIXED_DATA.company.representatives.titles[i],
       relationship: {
         representative: isMainRep, // Only first rep is the main representative
@@ -451,9 +455,9 @@ function generateCompanyProfile() {
   return {
     name: companyName,
     email: `info@${companyDomain}`,
-    phone: FIXED_DATA.company.phone,
-    tax_id: FIXED_DATA.company.tax_id,
-    address: FIXED_DATA.company.address,
+    phone: market.profile.phone,
+    tax_id: market.profile.companyId,
+    address: market.profile.companyAddress,
     representatives, // Use array instead of single representative
     representative: representatives[0], // Keep backward compatibility
     mcc: FIXED_DATA.company.industry.mcc,
@@ -465,12 +469,12 @@ function generateCompanyProfile() {
 /**
  * Generate profiles based on type
  */
-function generateProfile(type) {
+function generateProfile(type, marketCode = "gb") {
   switch (type) {
     case "individual":
-      return generateIndividualProfile();
+      return generateIndividualProfile(marketCode);
     case "company":
-      return generateCompanyProfile();
+      return generateCompanyProfile(marketCode);
     default:
       throw new Error(
         'Invalid profile type. Must be "individual" or "company"'
@@ -481,10 +485,10 @@ function generateProfile(type) {
 /**
  * Generate multiple profiles
  */
-function generateProfiles(count = 1, type = "individual") {
+function generateProfiles(count = 1, type = "individual", marketCode = "gb") {
   const profiles = [];
   for (let i = 0; i < count; i++) {
-    profiles.push(generateProfile(type));
+    profiles.push(generateProfile(type, marketCode));
   }
   return profiles;
 }

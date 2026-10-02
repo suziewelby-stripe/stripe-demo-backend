@@ -7,6 +7,8 @@ const {
 
 function detailedAccount(status) {
   return {
+    identity: { country: "GB" },
+    defaults: { currency: "gbp" },
     configuration: {
       merchant: {
         capabilities: {
@@ -30,6 +32,8 @@ assert.deepStrictEqual(
     id: "acct_named",
     displayName: "Newest Shop",
     created: "2026-10-01T12:00:00.000Z",
+    country: "GB",
+    currency: "gbp",
     cardPaymentsStatus: "active",
     canTakeCardPayments: true,
   }
@@ -60,6 +64,8 @@ assert.deepStrictEqual(
     id: "acct_unknown",
     displayName: "acct_unknown",
     created: "2026-09-30T12:00:00.000Z",
+    country: "GB",
+    currency: "gbp",
     cardPaymentsStatus: "unknown",
     canTakeCardPayments: null,
   }
@@ -114,7 +120,7 @@ async function run() {
   assert.strictEqual(summaries[summaries.length - 1].id, "acct_2");
   assert.strictEqual(retrieveCalls.length, 25);
   assert.deepStrictEqual(retrieveCalls[0].params, {
-    include: ["configuration.merchant"],
+    include: ["configuration.merchant", "identity", "defaults"],
   });
   const failedSummary = summaries.find((summary) => summary.id === "acct_13");
   assert.strictEqual(failedSummary.cardPaymentsStatus, "unknown");

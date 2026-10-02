@@ -9,6 +9,7 @@ const {
   randomPrice,
   randomSelection,
 } = require("../config/constants");
+const { marketForAccount } = require("../config/markets");
 
 /**
  * Create test customers for an account
@@ -31,7 +32,7 @@ async function createTestCustomers(accountId) {
 /**
  * Create test payments for an account
  */
-async function createTestPayments(accountId, customerIds) {
+async function createTestPayments(accountId, customerIds, currency = "gbp") {
   const paymentPromises = [];
 
   for (let i = 0; i < 15; i++) {
@@ -43,7 +44,7 @@ async function createTestPayments(accountId, customerIds) {
       stripe.paymentIntents.create(
         {
           amount,
-          currency: "gbp",
+          currency,
           customer: customerId,
           payment_method: cardToken,
           confirm: true,
@@ -59,7 +60,7 @@ async function createTestPayments(accountId, customerIds) {
     const disputePayment = stripe.paymentIntents.create(
       {
         amount: randomPrice(),
-        currency: "gbp",
+        currency,
         customer: randomSelection(customerIds),
         payment_method: DISPUTE_TOKEN,
         confirm: true,
@@ -74,7 +75,7 @@ async function createTestPayments(accountId, customerIds) {
   const bypassBalancePayment = stripe.paymentIntents.create(
     {
       amount: TOP_UP_AMOUNT,
-      currency: "gbp",
+      currency,
       customer: randomSelection(customerIds),
       payment_method: BYPASS_BALANCE_TOKEN,
       confirm: true,
@@ -90,7 +91,7 @@ async function createTestPayments(accountId, customerIds) {
 /**
  * Create test payouts for an account
  */
-async function createTestPayouts(accountId) {
+async function createTestPayouts(accountId, currency = "gbp") {
   let retries = 0;
   const maxRetries = 10;
 
@@ -105,7 +106,7 @@ async function createTestPayouts(accountId) {
           stripe.payouts.create(
             {
               amount,
-              currency: "gbp",
+              currency,
             },
             { stripeAccount: accountId }
           )
@@ -130,9 +131,13 @@ async function createTestPayouts(accountId) {
  * Create all test data for an account
  */
 async function createAllTestData(accountId) {
+  const account = await stripe.v2.core.accounts.retrieve(accountId, {
+    include: ["identity", "defaults"],
+  });
+  const { currency } = marketForAccount(account);
   const customerIds = await createTestCustomers(accountId);
-  await createTestPayments(accountId, customerIds);
-  await createTestPayouts(accountId);
+  await createTestPayments(accountId, customerIds, currency);
+  await createTestPayouts(accountId, currency);
 }
 
 module.exports = {

@@ -9,8 +9,14 @@ const {
   isValidProfileType,
 } = require("../utils/validation");
 const { deriveAccountStatus, normalizeAccount } = require("../utils/accountStatus");
+const { getMarket, marketForAccount } = require("../config/markets");
 
-const ACCOUNT_RETRIEVE_INCLUDE = ["configuration.merchant", "identity", "requirements"];
+const ACCOUNT_RETRIEVE_INCLUDE = [
+  "configuration.merchant",
+  "identity",
+  "requirements",
+  "defaults",
+];
 
 // In-memory storage for account statuses (consider using a database in production)
 const accountStatuses = new Map();
@@ -20,9 +26,11 @@ const accountStatuses = new Map();
  */
 async function getProfiles(req, res) {
   try {
-    const { useHardcoded } = req.query;
+    const { useHardcoded, market = "gb" } = req.query;
+    getMarket(market);
     const options = {
       useHardcoded: useHardcoded === "true",
+      market,
     };
 
     const profiles = accountService.getDemoProfiles(options);
@@ -33,7 +41,7 @@ async function getProfiles(req, res) {
     });
   } catch (error) {
     console.error("Error getting profiles:", error);
-    res.status(500).json({
+    res.status(error.code === "invalid_market" ? 400 : 500).json({
       success: false,
       message: error.message,
     });
@@ -62,7 +70,8 @@ async function getConnectedAccounts(req, res) {
  */
 async function generateProfiles(req, res) {
   try {
-    const { type = "individual", count = 5 } = req.query;
+    const { type = "individual", count = 5, market = "gb" } = req.query;
+    getMarket(market);
 
     if (!["individual", "company"].includes(type)) {
       return res.status(400).json({
@@ -81,7 +90,8 @@ async function generateProfiles(req, res) {
 
     const profiles = accountService.generateMultipleProfiles(
       type,
-      profileCount
+      profileCount,
+      market
     );
 
     res.json({
@@ -92,7 +102,7 @@ async function generateProfiles(req, res) {
     });
   } catch (error) {
     console.error("Error generating profiles:", error);
-    res.status(500).json({
+    res.status(error.code === "invalid_market" ? 400 : 500).json({
       success: false,
       message: error.message,
     });
@@ -104,7 +114,13 @@ async function generateProfiles(req, res) {
  */
 async function createAccount(req, res) {
   try {
-    const { profile_type, profile_data = {}, business_profile = {} } = req.body;
+    const {
+      profile_type,
+      profile_data = {},
+      business_profile = {},
+      market = "gb",
+    } = req.body;
+    const marketConfig = getMarket(market);
 
     if (!isValidProfileType(profile_type)) {
       return res.status(400).json({
@@ -149,7 +165,8 @@ async function createAccount(req, res) {
     const account = await accountService.createConnectedAccount(
       profile_type,
       profile_data,
-      business_profile
+      business_profile,
+      marketConfig.code
     );
 
     let createdPersons = [];
@@ -169,7 +186,7 @@ async function createAccount(req, res) {
 
     let location = null;
     try {
-      location = await terminalService.createDefaultLocation(account.id);
+      location = await terminalService.ensureLocation(account.id);
     } catch (locationError) {
       console.warn(
         `Failed to create default location for account ${account.id}: ${locationError.message}`
@@ -179,13 +196,15 @@ async function createAccount(req, res) {
     res.json({
       success: true,
       account_id: account.id,
+      country: marketConfig.country,
+      currency: marketConfig.currency,
       location_id: location?.id,
       persons_created: createdPersons.length,
       message: "Account created successfully",
     });
   } catch (error) {
     console.error("Error creating account:", error);
-    res.status(500).json({
+    res.status(error.code === "invalid_market" ? 400 : 500).json({
       success: false,
       message: error.message,
     });
@@ -263,9 +282,12 @@ async function createTestData(req, res) {
 function handleAccountUpdated(account) {
   const statusInfo = deriveAccountStatus(account);
   const normalized = normalizeAccount(account);
+  const market = marketForAccount(account);
 
   accountStatuses.set(account.id, {
     account_id: account.id,
+    country: market.country,
+    currency: market.currency,
     ...statusInfo,
     last_updated: new Date().toISOString(),
     raw_account: {

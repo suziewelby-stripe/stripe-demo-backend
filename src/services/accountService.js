@@ -4,12 +4,13 @@ const {
   COMPANY_PROFILES,
 } = require("../config/constants");
 const profileGenerator = require("./profileGenerator");
+const { getMarket, marketForAccount } = require("../config/markets");
 
 const CONNECTED_ACCOUNT_LIST_LIMIT = 25;
 const ACCOUNT_DETAIL_CONCURRENCY = 5;
 
 // Helper function to build base account configuration (v2 Core Accounts shape)
-function buildBaseAccountConfig() {
+function buildBaseAccountConfig(market) {
   return {
     dashboard: "none", // full | express | none
     configuration: {
@@ -20,6 +21,7 @@ function buildBaseAccountConfig() {
       },
     },
     defaults: {
+      currency: market.currency,
       responsibilities: {
         fees_collector: "application", // application | stripe
         losses_collector: "stripe", // application | stripe
@@ -29,8 +31,13 @@ function buildBaseAccountConfig() {
 }
 
 // Helper function to build individual account configuration
-function buildIndividualAccountConfig(profileData, businessProfile = {}) {
-  const config = buildBaseAccountConfig();
+function buildIndividualAccountConfig(
+  profileData,
+  businessProfile = {},
+  marketCode = "gb"
+) {
+  const market = getMarket(marketCode);
+  const config = buildBaseAccountConfig(market);
 
   config.contact_email = profileData.email;
   config.display_name =
@@ -38,7 +45,7 @@ function buildIndividualAccountConfig(profileData, businessProfile = {}) {
     `${profileData.firstName} ${profileData.lastName}`;
 
   config.identity = {
-    country: "gb",
+    country: market.code,
     entity_type: "individual",
     individual: {
       given_name: profileData.firstName,
@@ -64,11 +71,7 @@ function buildIndividualAccountConfig(profileData, businessProfile = {}) {
 
   // External bank account (v1 call, applied against the v2 account id after creation)
   config._externalAccount = {
-    object: "bank_account",
-    account_number: "00012345",
-    routing_number: "108800",
-    country: "GB",
-    currency: "gbp",
+    ...market.externalAccount,
     account_holder_name: `${profileData.firstName} ${profileData.lastName}`,
     account_holder_type: "individual",
   };
@@ -77,21 +80,26 @@ function buildIndividualAccountConfig(profileData, businessProfile = {}) {
 }
 
 // Helper function to build company account configuration
-function buildCompanyAccountConfig(profileData, businessProfile = {}) {
-  const config = buildBaseAccountConfig();
+function buildCompanyAccountConfig(
+  profileData,
+  businessProfile = {},
+  marketCode = "gb"
+) {
+  const market = getMarket(marketCode);
+  const config = buildBaseAccountConfig(market);
 
   config.contact_email = profileData.email;
   config.display_name = profileData.name;
 
   config.identity = {
-    country: "gb",
+    country: market.code,
     entity_type: "company",
     business_details: {
       registered_name: profileData.name,
       address: profileData.address,
       phone: profileData.phone,
       id_numbers: profileData.tax_id
-        ? [{ type: "gb_crn", value: profileData.tax_id }]
+        ? [{ type: market.companyIdType, value: profileData.tax_id }]
         : undefined,
     },
   };
@@ -108,11 +116,7 @@ function buildCompanyAccountConfig(profileData, businessProfile = {}) {
 
   // External bank account (v1 call, applied against the v2 account id after creation)
   config._externalAccount = {
-    object: "bank_account",
-    account_number: "00012345",
-    routing_number: "108800",
-    country: "GB",
-    currency: "gbp",
+    ...market.externalAccount,
     account_holder_name: profileData.name,
     account_holder_type: "company",
   };
@@ -130,14 +134,23 @@ function buildCompanyAccountConfig(profileData, businessProfile = {}) {
 async function createConnectedAccount(
   profileType,
   profileData,
-  businessProfile = {}
+  businessProfile = {},
+  marketCode = "gb"
 ) {
   let accountConfig;
 
   if (profileType === "individual") {
-    accountConfig = buildIndividualAccountConfig(profileData, businessProfile);
+    accountConfig = buildIndividualAccountConfig(
+      profileData,
+      businessProfile,
+      marketCode
+    );
   } else {
-    accountConfig = buildCompanyAccountConfig(profileData, businessProfile);
+    accountConfig = buildCompanyAccountConfig(
+      profileData,
+      businessProfile,
+      marketCode
+    );
   }
 
   // external_account isn't part of the v2 Core Accounts create payload yet;
@@ -208,7 +221,8 @@ async function createAccountPersons(accountId, representatives) {
  * @returns {object} - Demo profiles for individual and company
  */
 function getDemoProfiles(options = {}) {
-  if (options.useHardcoded) {
+  const market = getMarket(options.market);
+  if (options.useHardcoded && market.code === "gb") {
     // Fallback to hardcoded profiles if requested
     const { randomSelection } = require("../config/constants");
     const selectedIndividual = randomSelection(INDIVIDUAL_PROFILES);
@@ -239,8 +253,10 @@ function getDemoProfiles(options = {}) {
   }
 
   // Generate fresh profiles each time instead of using hardcoded ones
-  const generatedIndividual = profileGenerator.generateIndividualProfile();
-  const generatedCompany = profileGenerator.generateCompanyProfile();
+  const generatedIndividual = profileGenerator.generateIndividualProfile(
+    market.code
+  );
+  const generatedCompany = profileGenerator.generateCompanyProfile(market.code);
 
   return {
     individual: {
@@ -272,8 +288,8 @@ function getDemoProfiles(options = {}) {
  * @param {number} count - Number of profiles to generate
  * @returns {Array} - Array of generated profiles
  */
-function generateMultipleProfiles(type, count = 5) {
-  return profileGenerator.generateProfiles(count, type);
+function generateMultipleProfiles(type, count = 5, marketCode = "gb") {
+  return profileGenerator.generateProfiles(count, type, marketCode);
 }
 
 /**
@@ -314,6 +330,7 @@ async function createAccountSession(accountId) {
 }
 
 function accountSummary(account, detailedAccount) {
+  const market = marketForAccount(detailedAccount || account);
   const cardPayments =
     detailedAccount &&
     detailedAccount.configuration &&
@@ -327,6 +344,8 @@ function accountSummary(account, detailedAccount) {
     id: account.id,
     displayName: account.display_name || account.id,
     created: account.created,
+    country: market.country,
+    currency: market.currency,
     cardPaymentsStatus: cardPaymentsStatus || "unknown",
     canTakeCardPayments:
       cardPaymentsStatus === null ? null : cardPaymentsStatus === "active",
@@ -377,7 +396,7 @@ async function listConnectedAccounts(stripeClient = stripe) {
       try {
         const detailedAccount = await stripeClient.v2.core.accounts.retrieve(
           account.id,
-          { include: ["configuration.merchant"] }
+          { include: ["configuration.merchant", "identity", "defaults"] }
         );
         return accountSummary(account, detailedAccount);
       } catch (error) {
@@ -391,12 +410,12 @@ async function listConnectedAccounts(stripeClient = stripe) {
 }
 
 module.exports = {
+  buildIndividualAccountConfig,
+  buildCompanyAccountConfig,
   createConnectedAccount,
   getDemoProfiles,
   generateMultipleProfiles,
   createAccountSession,
-  buildIndividualAccountConfig,
-  buildCompanyAccountConfig,
   createAccountPersons,
   listConnectedAccounts,
   accountSummary,
