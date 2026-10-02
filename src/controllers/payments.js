@@ -1,8 +1,38 @@
 const stripe = require("../config/stripe");
+const { marketForAccount } = require("../config/markets");
 
 // Base URL for redirects - defaults to localhost for development
 const BASE_URL =
   process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+
+async function resolveAccountCurrency(accountId, requestedCurrency) {
+  const account = await stripe.v2.core.accounts.retrieve(accountId, {
+    include: ["identity", "defaults"],
+  });
+  const currency = marketForAccount(account).currency;
+  if (
+    requestedCurrency &&
+    String(requestedCurrency).toLowerCase() !== currency
+  ) {
+    const error = new Error(
+      `Currency ${requestedCurrency} does not match account currency ${currency}`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  return { account, currency };
+}
+
+function normalizePaymentDescription(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    const error = new Error("description must be a string");
+    error.statusCode = 400;
+    throw error;
+  }
+  const description = value.trim();
+  return description || null;
+}
 
 /**
  * Middleware to validate customer exists if provided
@@ -80,10 +110,11 @@ async function createPaymentIntent(req, res) {
   try {
     const {
       amount,
-      currency = "gbp",
+      currency: requestedCurrency,
       account_id,
       payment_method_types = ["card_present"],
       capture_method = "automatic",
+      description: requestedDescription,
     } = req.body;
 
     if (!account_id) {
@@ -94,6 +125,12 @@ async function createPaymentIntent(req, res) {
       return res.status(400).json({ error: "Valid amount is required" });
     }
 
+    const description = normalizePaymentDescription(requestedDescription);
+    const { currency } = await resolveAccountCurrency(
+      account_id,
+      requestedCurrency
+    );
+
     // Build payment intent data
     const paymentIntentData = {
       amount,
@@ -101,6 +138,7 @@ async function createPaymentIntent(req, res) {
       payment_method_types,
       capture_method,
     };
+    if (description) paymentIntentData.description = description;
 
     // Add customer if validated (from middleware)
     if (req.validatedCustomer) {
@@ -118,7 +156,7 @@ async function createPaymentIntent(req, res) {
     );
 
     console.log(
-      `Payment intent created: ${paymentIntent.id} for £${amount / 100}`
+      `Payment intent created: ${paymentIntent.id} for ${currency.toUpperCase()} ${(amount / 100).toFixed(2)}${description ? ` (${description})` : ""}`
     );
 
     res.json({
@@ -128,11 +166,12 @@ async function createPaymentIntent(req, res) {
         id: paymentIntent.id,
         amount: paymentIntent.amount,
         currency: paymentIntent.currency,
+        description: paymentIntent.description,
       },
     });
   } catch (error) {
     console.error("Error creating payment intent:", error);
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 }
 
@@ -166,7 +205,7 @@ async function createPaymentLink(req, res) {
   try {
     const {
       amount,
-      currency = "gbp",
+      currency: requestedCurrency,
       account_id,
       description = "Payment",
     } = req.body;
@@ -179,8 +218,13 @@ async function createPaymentLink(req, res) {
       return res.status(400).json({ error: "Valid amount is required" });
     }
 
+    const { currency } = await resolveAccountCurrency(
+      account_id,
+      requestedCurrency
+    );
+
     console.log(
-      `Creating payment link for £${amount / 100} on account: ${account_id}`
+      `Creating payment link for ${currency.toUpperCase()} ${(amount / 100).toFixed(2)} on account: ${account_id}`
     );
 
     // Create a product first (required for payment links)
@@ -232,7 +276,7 @@ async function createPaymentLink(req, res) {
     console.error("Error details:", JSON.stringify(error, null, 2));
 
     // Ensure we always return JSON
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       error: error.message || "Failed to create payment link",
       details: error.type || "unknown_error",
     });
@@ -246,7 +290,7 @@ async function createCheckoutSession(req, res) {
   try {
     const {
       amount,
-      currency = "gbp",
+      currency: requestedCurrency,
       account_id,
       customer,
       description = "Payment",
@@ -260,11 +304,14 @@ async function createCheckoutSession(req, res) {
       return res.status(400).json({ error: "Valid amount is required" });
     }
 
+    const { account, currency } = await resolveAccountCurrency(
+      account_id,
+      requestedCurrency
+    );
+
     // Fetch the actual business name from the Stripe Connect account
     let businessName = "Your Business";
     try {
-      const account = await stripe.v2.core.accounts.retrieve(account_id);
-
       businessName =
         account.business_profile?.name ||
         account.settings?.dashboard?.display_name ||
@@ -282,7 +329,7 @@ async function createCheckoutSession(req, res) {
     }
 
     console.log(
-      `Creating checkout session for £${amount / 100} on account: ${account_id}`
+      `Creating checkout session for ${currency.toUpperCase()} ${(amount / 100).toFixed(2)} on account: ${account_id}`
     );
 
     // Build checkout session data
@@ -347,7 +394,7 @@ async function createCheckoutSession(req, res) {
     console.error("Error creating checkout session:", error);
     console.error("Error details:", JSON.stringify(error, null, 2));
 
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       error: error.message || "Failed to create checkout session",
       details: error.type || "unknown_error",
     });
@@ -405,6 +452,7 @@ async function getCheckoutSession(req, res) {
 }
 
 module.exports = {
+  normalizePaymentDescription,
   createConnectionToken,
   createPaymentIntent,
   createPaymentLink,
