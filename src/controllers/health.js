@@ -11,6 +11,10 @@ async function healthCheck(req, res) {
       });
     }
 
+    if (!process.env.STRIPE_ACCOUNT_ID) {
+      return res.json({ publishableKey });
+    }
+
     const stripe = require("../config/stripe");
     let logoUrl = null;
     let iconUrl = null;
