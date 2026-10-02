@@ -97,6 +97,30 @@ Returns application configuration and health status.
 }
 ```
 
+### Account Management
+
+#### `GET /api/accounts`
+
+Returns the 25 most recent open v2 merchant accounts for the iOS account picker.
+Each result includes its display name, creation time, and whether its card
+payments capability is currently active. A `null` readiness value means Stripe
+status could not be retrieved for that row.
+
+```json
+{
+  "success": true,
+  "accounts": [
+    {
+      "id": "acct_...",
+      "displayName": "Example Shop",
+      "created": "2026-10-01T12:00:00.000Z",
+      "cardPaymentsStatus": "active",
+      "canTakeCardPayments": true
+    }
+  ]
+}
+```
+
 ### Terminal Integration
 
 #### `POST /api/connection_token`

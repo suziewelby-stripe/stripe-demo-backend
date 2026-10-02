@@ -5,7 +5,10 @@ const {
 } = require("../config/constants");
 const profileGenerator = require("./profileGenerator");
 
-// Helper function to build base account configuration
+const CONNECTED_ACCOUNT_LIST_LIMIT = 25;
+const ACCOUNT_DETAIL_CONCURRENCY = 5;
+
+// Helper function to build base account configuration (v2 Core Accounts shape)
 function buildBaseAccountConfig() {
   return {
     dashboard: "none", // full | express | none
@@ -310,6 +313,83 @@ async function createAccountSession(accountId) {
   return session;
 }
 
+function accountSummary(account, detailedAccount) {
+  const cardPayments =
+    detailedAccount &&
+    detailedAccount.configuration &&
+    detailedAccount.configuration.merchant &&
+    detailedAccount.configuration.merchant.capabilities &&
+    detailedAccount.configuration.merchant.capabilities.card_payments;
+  const cardPaymentsStatus =
+    cardPayments && cardPayments.status ? cardPayments.status : null;
+
+  return {
+    id: account.id,
+    displayName: account.display_name || account.id,
+    created: account.created,
+    cardPaymentsStatus: cardPaymentsStatus || "unknown",
+    canTakeCardPayments:
+      cardPaymentsStatus === null ? null : cardPaymentsStatus === "active",
+  };
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+async function listConnectedAccounts(stripeClient = stripe) {
+  const accountList = stripeClient.v2.core.accounts.list({
+    applied_configurations: ["merchant"],
+    closed: false,
+    // Stripe's v2 Accounts API allows at most 20 items per page. The SDK's
+    // auto-pagination collects the additional items needed for our 25-item UI.
+    limit: 20,
+  });
+  const listedAccounts = await accountList.autoPagingToArray({
+    limit: CONNECTED_ACCOUNT_LIST_LIMIT,
+  });
+
+  const accounts = listedAccounts
+    .slice()
+    .sort((left, right) => Date.parse(right.created) - Date.parse(left.created))
+    .slice(0, CONNECTED_ACCOUNT_LIST_LIMIT);
+
+  return mapWithConcurrency(
+    accounts,
+    ACCOUNT_DETAIL_CONCURRENCY,
+    async (account) => {
+      try {
+        const detailedAccount = await stripeClient.v2.core.accounts.retrieve(
+          account.id,
+          { include: ["configuration.merchant"] }
+        );
+        return accountSummary(account, detailedAccount);
+      } catch (error) {
+        console.warn(
+          `Could not fetch card-payment status for ${account.id}: ${error.message}`
+        );
+        return accountSummary(account, null);
+      }
+    }
+  );
+}
+
 module.exports = {
   createConnectedAccount,
   getDemoProfiles,
@@ -318,4 +398,7 @@ module.exports = {
   buildIndividualAccountConfig,
   buildCompanyAccountConfig,
   createAccountPersons,
+  listConnectedAccounts,
+  accountSummary,
+  mapWithConcurrency,
 };

@@ -41,6 +41,23 @@ async function getProfiles(req, res) {
 }
 
 /**
+ * List recent open merchant accounts for the iOS account picker.
+ */
+async function getConnectedAccounts(req, res) {
+  try {
+    const accounts = await accountService.listConnectedAccounts();
+    res.json({ success: true, accounts });
+  } catch (error) {
+    console.error("Error listing connected accounts:", error);
+    res.status(500).json({
+      success: false,
+      message: "Unable to load connected accounts",
+      error: "Unable to load connected accounts",
+    });
+  }
+}
+
+/**
  * Generate multiple profiles of a specific type
  */
 async function generateProfiles(req, res) {
@@ -335,6 +352,7 @@ async function getAccountStatus(req, res) {
 
 module.exports = {
   getProfiles,
+  getConnectedAccounts,
   generateProfiles,
   createAccount,
   createAccountSession,
