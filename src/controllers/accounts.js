@@ -8,7 +8,9 @@ const {
   validateBusinessProfile,
   isValidProfileType,
 } = require("../utils/validation");
-const { deriveAccountStatus } = require("../utils/accountStatus");
+const { deriveAccountStatus, normalizeAccount } = require("../utils/accountStatus");
+
+const ACCOUNT_RETRIEVE_INCLUDE = ["configuration.merchant", "identity", "requirements"];
 
 // In-memory storage for account statuses (consider using a database in production)
 const accountStatuses = new Map();
@@ -243,15 +245,16 @@ async function createTestData(req, res) {
  */
 function handleAccountUpdated(account) {
   const statusInfo = deriveAccountStatus(account);
+  const normalized = normalizeAccount(account);
 
   accountStatuses.set(account.id, {
     account_id: account.id,
     ...statusInfo,
     last_updated: new Date().toISOString(),
     raw_account: {
-      charges_enabled: account.charges_enabled,
-      payouts_enabled: account.payouts_enabled,
-      details_submitted: account.details_submitted,
+      charges_enabled: normalized.chargesEnabled,
+      payouts_enabled: normalized.payoutsEnabled,
+      details_submitted: normalized.detailsSubmitted,
       requirements: account.requirements,
     },
   });
@@ -283,7 +286,9 @@ function handleAccountUpdated(account) {
  */
 async function fetchAndUpdateAccountStatus(accountId) {
   try {
-    const account = await stripe.accounts.retrieve(accountId);
+    const account = await stripe.v2.core.accounts.retrieve(accountId, {
+      include: ACCOUNT_RETRIEVE_INCLUDE,
+    });
     handleAccountUpdated(account);
   } catch (error) {
     console.error(`Error fetching account ${accountId}:`, error.message);
@@ -297,34 +302,23 @@ async function getAccountStatus(req, res) {
   try {
     const { accountId } = req.params;
 
-    let statusInfo = accountStatuses.get(accountId);
-
-    if (!statusInfo) {
-      try {
-        const account = await stripe.accounts.retrieve(accountId);
-        const derivedStatus = deriveAccountStatus(account);
-
-        statusInfo = {
-          account_id: accountId,
-          ...derivedStatus,
-          last_updated: new Date().toISOString(),
-          raw_account: {
-            charges_enabled: account.charges_enabled,
-            payouts_enabled: account.payouts_enabled,
-            details_submitted: account.details_submitted,
-            requirements: account.requirements,
-          },
-        };
-
-        accountStatuses.set(accountId, statusInfo);
-      } catch (stripeError) {
-        return res.status(404).json({
-          success: false,
-          message: `Account ${accountId} not found`,
-          error: stripeError.message,
-        });
-      }
+    try {
+      // Always retrieve the current v2 state. Capability activation is
+      // asynchronous after onboarding, so a cached Pending response can become
+      // stale even when webhooks are unavailable during local development.
+      const account = await stripe.v2.core.accounts.retrieve(accountId, {
+        include: ACCOUNT_RETRIEVE_INCLUDE,
+      });
+      handleAccountUpdated(account);
+    } catch (stripeError) {
+      return res.status(404).json({
+        success: false,
+        message: `Account ${accountId} not found`,
+        error: stripeError.message,
+      });
     }
+
+    const statusInfo = accountStatuses.get(accountId);
 
     res.json({
       success: true,

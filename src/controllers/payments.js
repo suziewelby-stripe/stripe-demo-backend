@@ -263,7 +263,7 @@ async function createCheckoutSession(req, res) {
     // Fetch the actual business name from the Stripe Connect account
     let businessName = "Your Business";
     try {
-      const account = await stripe.accounts.retrieve(account_id);
+      const account = await stripe.v2.core.accounts.retrieve(account_id);
 
       businessName =
         account.business_profile?.name ||

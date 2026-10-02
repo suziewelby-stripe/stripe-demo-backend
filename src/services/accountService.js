@@ -8,45 +8,18 @@ const profileGenerator = require("./profileGenerator");
 // Helper function to build base account configuration
 function buildBaseAccountConfig() {
   return {
-    capabilities: {
-      card_payments: {
-        requested: true,
-      },
-      transfers: {
-        requested: true,
-      },
-    },
-    country: "GB",
-    controller: {
-      fees: {
-        payer: "application", // account | application
-      },
-      losses: {
-        payments: "stripe", // application | stripe
-      },
-      requirement_collection: "stripe", // application | stripe
-      stripe_dashboard: {
-        type: "none", // express | full | none
-      },
-    },
-    additional_verifications: {
-      document: {
-        apply_to: ["representative"],
-        requested: true,
-        require_live_capture: true,
-        require_matching_selfie: true,
-        upfront: [
-          {
-            disables: "payouts_and_payments",
-          },
-        ],
-      },
-    },
-    settings: {
-      payouts: {
-        schedule: {
-          interval: "daily",
+    dashboard: "none", // full | express | none
+    configuration: {
+      merchant: {
+        capabilities: {
+          card_payments: { requested: true },
         },
+      },
+    },
+    defaults: {
+      responsibilities: {
+        fees_collector: "application", // application | stripe
+        losses_collector: "stripe", // application | stripe
       },
     },
   };
@@ -56,34 +29,38 @@ function buildBaseAccountConfig() {
 function buildIndividualAccountConfig(profileData, businessProfile = {}) {
   const config = buildBaseAccountConfig();
 
-  config.business_type = "individual";
+  config.contact_email = profileData.email;
+  config.display_name =
+    profileData.businessName ||
+    `${profileData.firstName} ${profileData.lastName}`;
 
-  // Individual details
-  config.individual = {
-    first_name: profileData.firstName,
-    last_name: profileData.lastName,
-    email: profileData.email,
-    phone: profileData.phone,
-    dob: profileData.dob,
-    address: profileData.address,
+  config.identity = {
+    country: "gb",
+    entity_type: "individual",
+    individual: {
+      given_name: profileData.firstName,
+      surname: profileData.lastName,
+      email: profileData.email,
+      phone: profileData.phone,
+      date_of_birth: profileData.dob,
+      address: profileData.address,
+    },
   };
 
-  // Business profile
-  config.business_profile = {
-    name:
+  config.configuration.merchant.mcc = businessProfile.mcc || "5999"; // Default to misc retail
+  config.configuration.merchant.statement_descriptor = {
+    descriptor: (
       profileData.businessName ||
-      `${profileData.firstName} ${profileData.lastName}`,
-    product_description:
-      businessProfile.product_description ||
-      profileData.product_description ||
-      "",
-    support_phone: businessProfile.support_phone || profileData.phone || "",
-    mcc: businessProfile.mcc || "5999", // Default to misc retail
+      `${profileData.firstName} ${profileData.lastName}`
+    ).slice(0, 22),
+  };
+  config.configuration.merchant.support = {
+    phone: businessProfile.support_phone || profileData.phone || "",
     url: profileData.website || businessProfile.url,
   };
 
-  // External bank account
-  config.external_account = {
+  // External bank account (v1 call, applied against the v2 account id after creation)
+  config._externalAccount = {
     object: "bank_account",
     account_number: "00012345",
     routing_number: "108800",
@@ -100,30 +77,34 @@ function buildIndividualAccountConfig(profileData, businessProfile = {}) {
 function buildCompanyAccountConfig(profileData, businessProfile = {}) {
   const config = buildBaseAccountConfig();
 
-  config.business_type = "company";
+  config.contact_email = profileData.email;
+  config.display_name = profileData.name;
 
-  // Company details
-  config.company = {
-    name: profileData.name,
-    address: profileData.address,
-    phone: profileData.phone,
-    tax_id: profileData.tax_id,
+  config.identity = {
+    country: "gb",
+    entity_type: "company",
+    business_details: {
+      registered_name: profileData.name,
+      address: profileData.address,
+      phone: profileData.phone,
+      id_numbers: profileData.tax_id
+        ? [{ type: "gb_crn", value: profileData.tax_id }]
+        : undefined,
+    },
   };
 
-  // Business profile
-  config.business_profile = {
-    name: profileData.name,
-    product_description:
-      businessProfile.product_description ||
-      profileData.product_description ||
-      "",
-    support_phone: businessProfile.support_phone || profileData.phone || "",
-    mcc: profileData.mcc || businessProfile.mcc || "5999", // Default to misc retail
+  config.configuration.merchant.mcc =
+    profileData.mcc || businessProfile.mcc || "5999"; // Default to misc retail
+  config.configuration.merchant.statement_descriptor = {
+    descriptor: profileData.name.slice(0, 22),
+  };
+  config.configuration.merchant.support = {
+    phone: businessProfile.support_phone || profileData.phone || "",
     url: profileData.url || businessProfile.url,
   };
 
-  // External bank account
-  config.external_account = {
+  // External bank account (v1 call, applied against the v2 account id after creation)
+  config._externalAccount = {
     object: "bank_account",
     account_number: "00012345",
     routing_number: "108800",
@@ -156,7 +137,26 @@ async function createConnectedAccount(
     accountConfig = buildCompanyAccountConfig(profileData, businessProfile);
   }
 
-  const account = await stripe.accounts.create(accountConfig);
+  // external_account isn't part of the v2 Core Accounts create payload yet;
+  // pull it out and attach it via the v1 external-accounts call afterward.
+  const externalAccount = accountConfig._externalAccount;
+  delete accountConfig._externalAccount;
+
+  const account = await stripe.v2.core.accounts.create(accountConfig);
+
+  if (externalAccount) {
+    try {
+      await stripe.accounts.createExternalAccount(account.id, {
+        external_account: externalAccount,
+      });
+    } catch (externalAccountError) {
+      console.error(
+        `Failed to attach external account for ${account.id}:`,
+        externalAccountError.message
+      );
+    }
+  }
+
   return account;
 }
 
